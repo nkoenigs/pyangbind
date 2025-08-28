@@ -447,7 +447,7 @@ long = int
 
             actions = [ch for ch in module.i_children if ch.keyword == "action"]
             if len(actions):
-                get_children(ctx, fd, actions, module, register_paths=False, path="/%s_actions" % (safe_name(module.args))
+                get_children(ctx, fd, actions, module, register_paths=False, path="/%s_actions" % (safe_name(module.args)))
 
 
 def build_identities(ctx, defnd):
