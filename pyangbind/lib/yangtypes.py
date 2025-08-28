@@ -1488,7 +1488,8 @@ def YANGInstanceIdentifier(*args, **kwargs):
 
                     if len(path_chk) < 1:
 
-                        raise ValueError("If require-instance is set to true, the xpath needs to exist. In other words it must exist.")
+                        raise ValueError("If require-instance is set to true, the xpath needs to "
+                                         "exist. In other words it must exist.")
 
                 self.set(value=value)
 

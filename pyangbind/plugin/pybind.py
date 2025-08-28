@@ -445,6 +445,10 @@ long = int
                         path="/%s_notification" % (safe_name(module.arg)),
                     )
 
+            actions = [ch for ch in module.i_children if ch.keyword == "action"]
+            if len(actions):
+                get_children(ctx, fd, actions, module, register_paths=False, path="/%s_actions" % (safe_name(moudle.args)")
+
 
 def build_identities(ctx, defnd):
     # Build a storage object that has all the definitions that we
@@ -803,7 +807,7 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
 
     # 'container', 'module', 'list' and 'submodule' all have their own classes
     # generated.
-    if parent.keyword in ["container", "module", "list", "submodule", "input", "output", "rpc", "notification"]:
+    if parent.keyword in ["container", "module", "list", "submodule", "input", "output", "rpc", "notification", "action"]:
         if ctx.opts.split_class_dir:
             nfd.write("class %s(PybindBase):\n" % safe_name(parent.arg))
         else:
@@ -1368,7 +1372,7 @@ def build_elemtype(ctx, et, prefix=False):
                 if position is not None:
                     pos = position.arg
                 else:
-                    pos = 1 + max(allowed_bits)
+                    pos = 1 + allowed_bits[max(allowed_bits)]
                 allowed_bits[bit.arg] = pos
             cls = "restricted-bits"
             elemtype = {
