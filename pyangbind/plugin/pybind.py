@@ -192,7 +192,7 @@ class_map = {
 INT_RANGE_TYPES = ["uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64"]
 
 # The types that are built-in to YANG
-YANG_BUILTIN_TYPES = list(class_map.keys()) + ["container", "list", "rpc", "notification", "leafref"]
+YANG_BUILTIN_TYPES = list(class_map.keys()) + ["container", "list", "rpc", "notification", "leafref", "action"]
 
 
 # Base machinery to support operation as a plugin to pyang.
@@ -445,9 +445,9 @@ long = int
                         path="/%s_notification" % (safe_name(module.arg)),
                     )
 
-            actions = [ch for ch in module.i_children if ch.keyword == "action"]
-            if len(actions):
-                get_children(ctx, fd, actions, module, register_paths=False, path="/%s_actions" % (safe_name(module.args)))
+            # actions = [ch for ch in module.i_children if ch.keyword == "action"]
+            # if len(actions):
+            #     get_children(ctx, fd, actions, module, register_paths=False, path="/%s_actions" % (safe_name(module.args)))
 
 
 def build_identities(ctx, defnd):
@@ -1097,6 +1097,82 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
           setmethod(getattr(args[0], e), load=load)\n"""
         )
 
+        
+        # NEW: If this class represents a YANG 'action', make it callable.
+        if parent.keyword == "action":
+            nfd.write(
+                """
+  def __call__(self, *args, **kwargs):
+    \"\"\"Invoke the YANG action.
+
+    You may pass:
+      • nothing (if the action has no 'input'),
+      • a single object with the same attributes as 'input', or
+      • keyword arguments that match 'input' leaves.
+
+    Resolution order:
+      1) If an extmethod handler exists at key 'action:' + '/'.join(self._path()),
+         it will be called as handler(self, input_obj) and its return value used.
+      2) If no handler is present:
+         - return an empty 'output' instance if one exists,
+         - else return None.
+    \"\"\"
+    # Prepare input if present
+    input_obj = None
+    has_input = hasattr(self, "input")
+    if has_input:
+      input_obj = self.input.__class__(parent=self)
+      # Populate input from either args[0] or kwargs
+      if args:
+        if len(args) != 1:
+          raise TypeError("action call accepts at most one positional argument (the 'input' object)")
+        src = args[0]
+        # Copy attributes by name
+        for _e in input_obj._pyangbind_elements:
+          if hasattr(src, _e):
+            setattr(input_obj, _e, getattr(src, _e))
+      if kwargs:
+        for k, v in kwargs.items():
+          if k in input_obj._pyangbind_elements:
+            setattr(input_obj, k, v)
+          else:
+            raise AttributeError("unknown input parameter '%s' for action '%s'" % (k, self._yang_name))
+
+    # Dispatch to external handler if provided
+    handler = None
+    if isinstance(self._extmethods, dict):
+      # absolute path as a list (e.g., ["mod", "cont", "the-action"])
+      _p = self._path()
+      handler = self._extmethods.get("action:" + "/".join(_p), None)
+
+    result = None
+    if handler is not None:
+      result = handler(self, input_obj)
+
+    # Build/return output if present
+    if hasattr(self, "output"):
+      if result is None:
+        return self.output.__class__(parent=self)
+      # If handler returned an output instance, pass it through
+      if isinstance(result, self.output.__class__):
+        return result
+      # If handler returned a dict, map into output leaves
+      if isinstance(result, dict):
+        out = self.output.__class__(parent=self)
+        for k, v in result.items():
+          if k in out._pyangbind_elements:
+            setattr(out, k, v)
+          else:
+            raise AttributeError("unknown output field '%s' for action '%s'" % (k, self._yang_name))
+        return out
+      # Otherwise, just return the raw result
+      return result
+    else:
+      # No 'output' defined
+      return result
+"""
+            )
+
         # A generic method to provide a path() method on each container, that gives
         # a path in the form of a list that describes the nodes in the hierarchy.
         nfd.write(
@@ -1478,7 +1554,7 @@ def get_element(ctx, fd, element, module, parent, path, parent_cfg=True, choice=
     # leaf-list or choice. Alternatively, it can be the 'input' or 'output'
     # substmts of an RPC or a notification
     if hasattr(element, "i_children"):
-        if element.keyword in ["container", "list", "input", "output", "notification"]:
+        if element.keyword in ["container", "list", "input", "output", "notification", "action"]:
             has_children = True
         elif element.keyword in ["leaf-list"]:
             create_list = True
