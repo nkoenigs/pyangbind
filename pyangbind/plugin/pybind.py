@@ -1070,7 +1070,10 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
 
         # Write out the classes that are stored locally as self.__foo where
         # foo is the safe YANG name.
+
+        # Track underscored action names so we can expose a non-underscored alias.
         _action_aliases = []
+
         for c in classes:
             nfd.write("    self.%s = %s(%s)\n" % (classes[c]["name"], classes[c]["type"], classes[c]["arg"]))
 
@@ -1092,6 +1095,7 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
                 pass
             except Exception:
                 pass
+            print(classes[c]["name"])
             if classes[c]["name"].endswith("_"):
                 _alias = classes[c]["name"][:-1]
                 # Only alias for likely complex/action-like nodes whose name is present in elements
