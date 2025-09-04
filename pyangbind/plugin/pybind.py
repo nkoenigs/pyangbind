@@ -1097,51 +1097,83 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
           setmethod(getattr(args[0], e), load=load)\n"""
         )
 
-        
-        # NEW: If this class represents a YANG 'action', make it callable.
+        # NEW: If this class represents a YANG 'action', make it callable with
+        # args derived from YANG 'input', and return values derived from 'output'.
         if parent.keyword == "action":
+            # Build a kw-only signature from top-level input leaves/leaf-lists.
+            input_node = None
+            output_node = None
+            input_params = []
+            output_leaf_names = []
+            has_nested_output = False
+
+            for ch in i_children:
+                if ch.keyword == "input":
+                    input_node = ch
+                elif ch.keyword == "output":
+                    output_node = ch
+
+            if input_node is not None and hasattr(input_node, "i_children"):
+                for ich in input_node.i_children:
+                    # Only top-level leaves/leaf-lists become simple kwargs
+                    if ich.keyword in ("leaf", "leaf-list"):
+                        input_params.append(safe_name(ich.arg))
+
+            if output_node is not None and hasattr(output_node, "i_children"):
+                for och in output_node.i_children:
+                    if och.keyword in ("leaf", "leaf-list"):
+                        output_leaf_names.append(safe_name(och.arg))
+                    else:
+                        # Any non-leaf child (container/list/choice etc.)
+                        has_nested_output = True
+
+            sig = ""
+            if len(input_params):
+                sig = ", *, " + ", ".join([f"{p}=None" for p in input_params])
+
+            # Emit the callable with the computed signature.
             nfd.write(
-                """
-  def __call__(self, *args, **kwargs):
+                f"""
+  def __call__(self, *args{sig}):
     \"\"\"Invoke the YANG action.
 
-    You may pass:
-      • nothing (if the action has no 'input'),
-      • a single object with the same attributes as 'input', or
-      • keyword arguments that match 'input' leaves.
-
-    Resolution order:
-      1) If an extmethod handler exists at key 'action:' + '/'.join(self._path()),
-         it will be called as handler(self, input_obj) and its return value used.
-      2) If no handler is present:
-         - return an empty 'output' instance if one exists,
-         - else return None.
+    Call forms:
+      • keyword-only args for top-level 'input' leaves/leaf-lists
+      • OR a single positional arg: an 'input' instance (for nested structures)
+    Return:
+      • None (no 'output');
+      • single Python value (one top-level leaf/leaf-list, no nested output);
+      • dict of {{leaf_name: value, ...}} (otherwise). Nested output children
+        (containers/lists) are included as their generated objects.
     \"\"\"
-    # Prepare input if present
+    # Build input object if present
     input_obj = None
     has_input = hasattr(self, "input")
     if has_input:
       input_obj = self.input.__class__(parent=self)
-      # Populate input from either args[0] or kwargs
+      # 1) Positional: an input instance to copy from
       if args:
         if len(args) != 1:
           raise TypeError("action call accepts at most one positional argument (the 'input' object)")
         src = args[0]
-        # Copy attributes by name
         for _e in input_obj._pyangbind_elements:
           if hasattr(src, _e):
             setattr(input_obj, _e, getattr(src, _e))
-      if kwargs:
-        for k, v in kwargs.items():
-          if k in input_obj._pyangbind_elements:
-            setattr(input_obj, k, v)
-          else:
-            raise AttributeError("unknown input parameter '%s' for action '%s'" % (k, self._yang_name))
-
-    # Dispatch to external handler if provided
+      # 2) Keyword-only: map directly into top-level input leaves/leaf-lists
+"""
+            )
+            if len(input_params):
+                for p in input_params:
+                    nfd.write(
+                        f"""      if {p} is not None and "{p}" in input_obj._pyangbind_elements:
+        setattr(input_obj, "{p}", {p})
+"""
+                    )
+            nfd.write(
+                """
+    # Resolve external handler (if any)
     handler = None
     if isinstance(self._extmethods, dict):
-      # absolute path as a list (e.g., ["mod", "cont", "the-action"])
       _p = self._path()
       handler = self._extmethods.get("action:" + "/".join(_p), None)
 
@@ -1149,26 +1181,97 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
     if handler is not None:
       result = handler(self, input_obj)
 
-    # Build/return output if present
+    # Prepare/normalize an output instance if 'output' exists
     if hasattr(self, "output"):
+      out_inst = self.output.__class__(parent=self)
       if result is None:
-        return self.output.__class__(parent=self)
-      # If handler returned an output instance, pass it through
+        # Nothing from handler: return based on output shape
+"""
+            )
+            # Return shape when handler returned nothing:
+            if len(output_leaf_names) == 0 and not has_nested_output:
+                # No output children at all
+                nfd.write("        return None\n")
+            elif len(output_leaf_names) == 1 and not has_nested_output:
+                only = output_leaf_names[0] if output_leaf_names else None
+                nfd.write(
+                    f"""        # Single top-level leaf/leaf-list
+        return getattr(out_inst, "{only}")
+"""
+                )
+            else:
+                # Multiple leaves and/or nested children -> dict
+                nfd.write(
+                    "        _ret = {}\n"
+                )
+                for name in output_leaf_names:
+                    nfd.write(
+                        f'        _ret["{name}"] = getattr(out_inst, "{name}")\n'
+                    )
+                if has_nested_output:
+                    nfd.write(
+                        "        # Include any nested output children as objects\n"
+                        "        for _e in out_inst._pyangbind_elements:\n"
+                        "          if _e not in " + repr(tuple(output_leaf_names)) + ":\n"
+                        "            _ret[_e] = getattr(out_inst, _e)\n"
+                    )
+                nfd.write("        return _ret\n")
+
+            # Now handle cases where handler returned something
+            nfd.write(
+                """
+      # If handler returned an output instance, use it
       if isinstance(result, self.output.__class__):
-        return result
-      # If handler returned a dict, map into output leaves
-      if isinstance(result, dict):
-        out = self.output.__class__(parent=self)
+        out_inst = result
+      elif isinstance(result, dict):
+        # Map dict into output leaves (and nested if provided)
         for k, v in result.items():
-          if k in out._pyangbind_elements:
-            setattr(out, k, v)
+          if k in out_inst._pyangbind_elements:
+            setattr(out_inst, k, v)
           else:
-            raise AttributeError("unknown output field '%s' for action '%s'" % (k, self._yang_name))
-        return out
-      # Otherwise, just return the raw result
-      return result
+            # ignore unknown keys to keep forward-compatible
+            pass
+      else:
+        # If a single-leaf output and primitive returned, pass it through
+"""
+            )
+            if len(output_leaf_names) == 1 and not has_nested_output:
+                only = output_leaf_names[0]
+                nfd.write(
+                    f"""        if result is not None:
+          return result
+        # otherwise fall through and return the out_inst leaf value
+        return getattr(out_inst, "{only}")
+"""
+                )
+            else:
+                nfd.write(
+                    "        # Fall back to structured return from out_inst\n"
+                )
+                if len(output_leaf_names) == 0 and not has_nested_output:
+                    nfd.write("        return None\n")
+                elif len(output_leaf_names) == 1 and not has_nested_output:
+                    only = output_leaf_names[0]
+                    nfd.write(f'        return getattr(out_inst, "{only}")\n')
+                else:
+                    nfd.write(
+                        "        _ret = {}\n"
+                    )
+                    for name in output_leaf_names:
+                        nfd.write(
+                            f'        _ret["{name}"] = getattr(out_inst, "{name}")\n'
+                        )
+                    if has_nested_output:
+                        nfd.write(
+                            "        for _e in out_inst._pyangbind_elements:\n"
+                            "          if _e not in " + repr(tuple(output_leaf_names)) + ":\n"
+                            "            _ret[_e] = getattr(out_inst, _e)\n"
+                        )
+                    nfd.write("        return _ret\n")
+            nfd.write(
+                """
     else:
-      # No 'output' defined
+      # No 'output' defined on this action
       return result
 """
             )
