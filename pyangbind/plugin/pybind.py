@@ -852,7 +852,7 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
         raise TypeError("unhandled keyword with children %s at %s" % (parent.keyword, parent.pos))
 
     elements_str = ""
-    if len(elements) == 0:
+    if len(elements) == 0 and parent.keyword != "action":
         nfd.write("  _pyangbind_elements = {}")
     else:
         # We want to prevent a user from creating new attributes on a class that
