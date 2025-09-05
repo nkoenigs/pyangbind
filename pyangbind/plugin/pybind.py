@@ -192,7 +192,7 @@ class_map = {
 INT_RANGE_TYPES = ["uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64"]
 
 # The types that are built-in to YANG
-YANG_BUILTIN_TYPES = list(class_map.keys()) + ["container", "list", "rpc", "notification", "leafref", "action"]
+YANG_BUILTIN_TYPES = list(class_map.keys()) + ["container", "list", "rpc", "notification", "leafref"]
 
 
 # Base machinery to support operation as a plugin to pyang.
@@ -445,9 +445,9 @@ long = int
                         path="/%s_notification" % (safe_name(module.arg)),
                     )
 
-            # actions = [ch for ch in module.i_children if ch.keyword == "action"]
-            # if len(actions):
-            #     get_children(ctx, fd, actions, module, register_paths=False, path="/%s_actions" % (safe_name(module.args)))
+            actions = [ch for ch in module.i_children if ch.keyword == "action"]
+            if len(actions):
+                get_children(ctx, fd, actions, module, register_paths=False, path="/%s_actions" % (safe_name(module.args)))
 
 
 def build_identities(ctx, defnd):
@@ -1070,10 +1070,8 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
 
         # Write out the classes that are stored locally as self.__foo where
         # foo is the safe YANG name.
-
         for c in classes:
             nfd.write("    self.%s = %s(%s)\n" % (classes[c]["name"], classes[c]["type"], classes[c]["arg"]))
-
         # Don't accept arguments to a container/list/submodule class
         nfd.write(
             """
@@ -1099,28 +1097,26 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
           setmethod(getattr(args[0], e), load=load)\n"""
         )
 
-        # Insert a callable for YANG 'action' classes. This works whether the action
-        # has input/output or not.
+        # A generic method to provide a path() method on each container, that gives
+        # a path in the form of a list that describes the nodes in the hierarchy.
+        nfd.write(
+            """
+  def _path(self):
+    if hasattr(self, "_parent"):
+      return self._parent._path()+[self._yang_name]
+    else:
+      return %s\n"""
+            % path.split("/")[1:]
+        )
+
+        # NEW: Make YANG 'action' classes callable (works with or without input/output)
         if parent.keyword == "action":
             nfd.write(
                 """
   def __call__(self, *args, **kwargs):
-    \"\"\"Invoke this YANG action.
+    \"\\"Invoke this YANG action.\\"\"
 
-    You may pass either:
-      • no arguments (for actions without 'input'), or
-      • a single positional 'input' instance, or
-      • keyword args matching top-level 'input' leaves/leaf-lists.
-
-    Return value:
-      • If an 'output' exists: returns an output instance by default.
-        - If the handler returns a dict, it is mapped into the output instance.
-        - If the handler returns an output instance, it is returned as-is.
-        - If the handler returns a primitive and the output is a single-leaf,
-          that primitive is returned.
-      • If no 'output' exists: returns the handler's result (or None).
-    \"\"\"
-    # Build input (if present)
+    # Build input (if defined)
     input_obj = None
     if hasattr(self, "input"):
       input_obj = self.input.__class__(parent=self)
@@ -1132,7 +1128,7 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
         for _e in getattr(input_obj, "_pyangbind_elements", []):
           if hasattr(src, _e):
             setattr(input_obj, _e, getattr(src, _e))
-      # Keyword: map into top-level input leaves/leaf-lists (ignore unknown keys)
+      # Keyword: map into top-level input leaves/leaf-lists
       for k, v in kwargs.items():
         if k in getattr(input_obj, "_pyangbind_elements", {}):
           setattr(input_obj, k, v)
@@ -1171,7 +1167,6 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
     # If output has a single top-level leaf and a primitive was returned, pass through
     _leaves = [e for e in getattr(out_inst, "_pyangbind_elements", {}).keys()]
     if len(_leaves) == 1:
-      # If the handler returned a primitive, prefer it; otherwise return the leaf value
       if not hasattr(result, "_pyangbind_elements"):
         return result
       return getattr(out_inst, _leaves[0])
@@ -1183,30 +1178,6 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
     return _ret
 """
             )
-
-        nfd.write(
-            """
-  def _path(self):
-    if hasattr(self, "_parent"):
-      return self._parent._path()+[self._yang_name]
-    else:
-      return %s\n"""
-            % path.split("/")[1:]
-        )
-
-        #############################################
-
-        # A generic method to provide a path() method on each container, that gives
-        # a path in the form of a list that describes the nodes in the hierarchy.
-        nfd.write(
-            """
-  def _path(self):
-    if hasattr(self, "_parent"):
-      return self._parent._path()+[self._yang_name]
-    else:
-      return %s\n"""
-            % path.split("/")[1:]
-        )
 
         # For each element, write out a getter and setter method - with the doc
         # string of the element within the model.
