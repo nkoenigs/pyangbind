@@ -1106,7 +1106,6 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
         # Materialize aliases after all members have been assigned.
         for _alias, _real in _action_aliases:
             nfd.write("    self.%s = self.%s\n" % (_alias, _real))
-            elements.append({"name":_alias})
 
         # Don't accept arguments to a container/list/submodule class
         nfd.write(
