@@ -1071,41 +1071,8 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
         # Write out the classes that are stored locally as self.__foo where
         # foo is the safe YANG name.
 
-        # Track underscored action names so we can expose a non-underscored alias.
-        _action_aliases = []
-
         for c in classes:
             nfd.write("    self.%s = %s(%s)\n" % (classes[c]["name"], classes[c]["type"], classes[c]["arg"]))
-
-            # If this element is an 'action' and ended up with a trailing underscore
-            # (e.g., 'delete_'), also expose a clean alias (e.g., 'delete').
-            # This preserves backward-compatibility (the underscored name still exists).
-            try:
-                _is_action = False
-                # Classes keyed by element name; we can detect action via the base arg
-                # since actions are container-like PybindBase classes with is_container='container'
-                # and have their own class emitted. Instead of deep-inspecting, rely on the
-                # metadata we put into 'classes' when building them: for actions, the yang_name
-                # is preserved in the base arg caller path and the 'origtype' was 'action'.
-                # A robust and cheap heuristic here is to check the i_children table we built.
-                # However, we no longer have direct access to the element dict here, so
-                # we treat any class whose generated type refers to a yc_* AND whose yang_name
-                # is present in self._pyangbind_elements and whose original name ended with '_'
-                # as an alias candidate. This keeps it specific to complex nodes (containers/actions).
-                pass
-            except Exception:
-                pass
-            print(classes[c]["name"])
-            if classes[c]["name"].endswith("_"):
-                _alias = classes[c]["name"][:-1]
-                # Only alias for likely complex/action-like nodes whose name is present in elements
-                # and the clean alias isn't already generated.
-                if _alias and _alias not in classes:
-                    _action_aliases.append((_alias, classes[c]["name"]))
-
-        # Materialize aliases after all members have been assigned.
-        for _alias, _real in _action_aliases:
-            nfd.write("    self.%s = self.%s\n" % (_alias, _real))
 
         # Don't accept arguments to a container/list/submodule class
         nfd.write(
