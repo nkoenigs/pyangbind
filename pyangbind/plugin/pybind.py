@@ -1106,7 +1106,7 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
         # Materialize aliases after all members have been assigned.
         for _alias, _real in _action_aliases:
             nfd.write("    self.%s = self.%s\n" % (_alias, _real))
-            elements.append({"name":_alias})
+            # elements.append({"name":_alias})
 
         # Don't accept arguments to a container/list/submodule class
         nfd.write(
@@ -1343,6 +1343,12 @@ def get_children(ctx, fd, i_children, module, parent, path=str(), parent_cfg=Tru
                 nfd.write("""  %s = __builtin__.property(_get_%s)\n""" % (i["name"], i["name"]))
             else:
                 nfd.write("""  %s = __builtin__.property(_get_%s, _set_%s)\n""" % (i["name"], i["name"], i["name"]))
+        
+        # attach tag for underscore alias
+        # for _alias, _real in _action_aliases:
+        #     nfd.write("""  %s = __builtin__.property(_get_%s)\n""" % (i["name"], i["name"]))
+        #     nfd.write("    self.%s = self.%s\n" % (_alias, _real))
+
     nfd.write("\n")
 
     # Store a list of the choices that are included within this module such that
@@ -1660,6 +1666,9 @@ def get_element(ctx, fd, element, module, parent, path, parent_cfg=True, choice=
                 "extensions": extensions if len(extensions) else None,
                 "presence": has_presence,
             }
+
+            if element.keyword == "action":
+                print("name: " + elemdict["name"])
 
             # Handle the different cases of class name, this depends on whether we
             # were asked to split the bindings into a directory structure or not.
